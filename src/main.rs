@@ -95,15 +95,16 @@ Notes:
     }
 }
 
-fn handle_tcp_stream(mut stream: TcpStream) {
-    let write = |buf: &[u8]| {
-        match stream.write(buf) {
-            Err(e) => {
-                eprintln!("Error writing to TcpStream: {}", e)
-            }
-            _ => {}
+fn he_write(r: io::Result<usize>) {
+    match r {
+        Err(e) => {
+            eprintln!("Error writing to TcpStream: {}", e)
         }
-    };
+        _ => {}
+    }
+}
+
+fn handle_tcp_stream(mut stream: TcpStream) {
     let mut buffer = [0; 1024];
     let mut headers_end_flag: u8 = 0;
     let mut is_headers_end = false;
@@ -134,19 +135,19 @@ fn handle_tcp_stream(mut stream: TcpStream) {
                                 })
                             } {
                                 println!("disallowed");
-                                write("\
+                                he_write(stream.write("\
                                 HTTP/1.1 405 Method not allowed\
-                                \r\n\r\n".as_bytes());
+                                \r\n\r\n".as_bytes()));
                                 return
                             }
-                            write("\
+                            he_write(stream.write("\
                             HTTP/1.1 200 OK\r\n\
                             Content-Type: text/plain; charset=utf-8\r\n\
-                            \r\n".as_bytes());
+                            \r\n".as_bytes()));
                             if method == "HEAD" {
                                 continue;
                             }
-                            write("Hello: ".as_bytes());
+                            he_write(stream.write("Hello: ".as_bytes()));
                         }
                     }
                     if headers_end_flag == 0 && byte == b'\r' {
@@ -176,7 +177,7 @@ fn handle_tcp_stream(mut stream: TcpStream) {
                     }
                     headers_end_flag += 1;
                 }
-                write(&buffer[0..n]);
+                he_write(stream.write(&buffer[0..n]));
                 if is_headers_end {
                     break;
                 }
