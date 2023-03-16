@@ -8,6 +8,101 @@ static mut A_PORT: Option<u16> = None;
 static mut A_ALLOWED_METHODS: Option<HashSet<String>> = None;
 static mut A_DISALLOWED_METHODS: Option<HashSet<String>> = None;
 
+struct BytesFind<'a> {
+    pattern: &'a [u8],
+    len: usize,
+    i: usize,
+    pos: usize,
+    result: Option<usize>,
+}
+
+impl<'a> BytesFind<'a> {
+    fn new(pattern: &'a [u8]) -> Self {
+        return Self {
+            pattern,
+            len: pattern.len(),
+            i: 0,
+            pos: 0,
+            result: None,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.i = 0;
+        self.pos = 0;
+        self.result = None;
+    }
+
+    fn find(&mut self, byte: u8) -> Option<usize> {
+        if self.result.is_some() {
+            return self.result;
+        }
+        if byte == self.pattern[self.i] {
+            self.i += 1;
+        } else if self.i != 0 {
+            self.i = 0;
+        }
+        self.pos += 1;
+        if self.i == self.len {
+            self.result = Some(self.pos - self.len);
+            self.result
+        } else {
+            None
+        }
+    }
+
+    fn finds(&mut self, bytes: &[u8]) -> Option<usize> {
+        if self.result.is_some() {
+            return self.result;
+        }
+        for byte in bytes {
+            if *byte == self.pattern[self.i] {
+                self.i += 1;
+            } else if self.i != 0 {
+                self.i = 0;
+            }
+            self.pos += 1;
+            if self.i == self.len {
+                self.result = Some(self.pos - self.len);
+                return self.result;
+            }
+        }
+        None
+    }
+}
+
+#[test]
+fn test_find() {
+    let mut bf = BytesFind::new(b"666");
+    assert_eq!(bf.find(b'6'), None);
+    assert_eq!(bf.find(b'6'), None);
+    assert_eq!(bf.find(b'6'), Some(0));
+    assert_eq!(bf.find(b'6'), Some(0));
+    bf.reset();
+    assert_eq!(bf.find(b'0'), None);
+    assert_eq!(bf.find(b'6'), None);
+    assert_eq!(bf.find(b'6'), None);
+    assert_eq!(bf.find(b'6'), Some(1));
+    assert_eq!(bf.find(b'6'), Some(1));
+}
+
+#[test]
+fn test_finds() {
+    let mut bf = BytesFind::new(b"666");
+    assert_eq!(bf.finds(b"666,666666"), Some(0));
+    assert_eq!(bf.finds(b","), Some(0));
+    bf.reset();
+    assert_eq!(bf.finds(b"6,666,666666"), Some(2));
+    assert_eq!(bf.finds(b"666"), Some(2));
+    bf.reset();
+    assert_eq!(bf.finds(b"6,6"), None);
+    assert_eq!(bf.finds(b"66,666666"), Some(2));
+    bf.reset();
+    assert_eq!(bf.finds(b"6,6"), None);
+    assert_eq!(bf.finds(b"6"), None);
+    assert_eq!(bf.finds(b"6,666666"), Some(2));
+}
+
 fn parse_set(s: &str) -> Option<HashSet<String>> {
     let mut set = HashSet::new();
     for mut s in s.split(',') {
@@ -18,11 +113,11 @@ fn parse_set(s: &str) -> Option<HashSet<String>> {
         let s = s.to_string().to_ascii_uppercase();
         set.insert(s);
     }
-    return if set.len() == 0 {
+    if set.len() == 0 {
         None
     } else {
         Some(set)
-    };
+    }
 }
 
 fn parse_args() {
@@ -104,91 +199,138 @@ fn he_write(r: io::Result<usize>) {
     }
 }
 
+fn he_flush(stream: &mut TcpStream) {
+    match stream.flush() {
+        Err(e) => {
+            eprintln!("Error flush TcpStream: {}", e);
+        }
+        _ => {}
+    }
+}
+
 fn handle_tcp_stream(mut stream: TcpStream) {
-    let mut buffer = [0; 1024];
-    let mut headers_flag: u8 = 0;
-    let mut has_headers = false;
-    let mut start_line = Vec::new();
     let mut has_request_line = false;
+    let mut line_bf = BytesFind::new(b"\r\n");
+    let mut headers_bf = BytesFind::new(b"\r\n\r\n");
+    let mut msg = Vec::with_capacity(4096);
+    let mut buffer = [0; 2048];
+    let mut content_length: Option<usize> = None;
+    let mut content_i = 0;
     'read:
     loop {
         match stream.read(&mut buffer) {
-            Ok(0) => break,
-            Ok(mut n) => {
-                let mut offset = 0;
-                for i in 0..n {
-                    let byte = buffer[i];
+            Ok(0) => {
+                break;
+            },
+            Ok(n) => {
+                'byte:
+                for byte in &buffer[..n] {
+                    msg.push(*byte);
+                    match content_length {
+                        Some(length) => {
+                            content_i += 1;
+                            if content_i >= length {
+                                break 'read;
+                            }
+                            continue;
+                        }
+                        None => {}
+                    }
                     if !has_request_line {
-                        start_line.push(byte);
-                    }
-                    if headers_flag == 0 && byte == b'\r' {
-                        headers_flag = 1;
-                        continue;
-                    }
-                    let crlf_mod = headers_flag % 2;
-                    if !(crlf_mod == 0 && byte == b'\r') && !(crlf_mod == 1 && byte == b'\n') {
-                        headers_flag = 0;
-                        if byte == b'\r' {
-                            headers_flag = 1;
+                        match line_bf.find(*byte) {
+                            None => {}
+                            Some(end) => {
+                                has_request_line = true;
+                                let start_line = String::from_utf8_lossy(&msg[..end]);
+                                println!("{}", start_line);
+                                let arr: Vec<&str> = start_line.split(' ')
+                                    .filter(|&s| !s.is_empty()).collect();
+                                if arr.len() != 3 {
+                                    eprintln!("Error HTTP request line: {}", start_line);
+                                    he_write(stream.write(
+                                        b"HTTP/1.1 500 Internal Server Error\r\n\r\n"));
+                                    he_flush(&mut stream);
+                                    return;
+                                }
+                                let method = arr[0].to_ascii_uppercase();
+                                let protocol = arr[2];
+                                if unsafe {
+                                    (match A_DISALLOWED_METHODS.as_ref() {
+                                        None => {false}
+                                        Some(set) => {set.contains(&method)}
+                                    }) || (match A_ALLOWED_METHODS.as_ref() {
+                                        None => {false}
+                                        Some(set) => {!set.contains(&method)}
+                                    })
+                                } {
+                                    println!("disallowed");
+                                    he_write(stream.write(protocol.as_bytes()));
+                                    he_write(stream.write(b" \
+                                    405 Method not allowed\r\n\
+                                    \r\n"));
+                                    he_flush(&mut stream);
+                                    return;
+                                }
+                                he_write(stream.write(protocol.as_bytes()));
+                                he_write(stream.write(b" \
+                                200 OK\r\n\
+                                Content-Type: text/plain; charset=utf-8\r\n\
+                                "));
+                                if method == "HEAD" {
+                                    he_flush(&mut stream);
+                                    return;
+                                }
+                            }
                         }
-                        continue;
                     }
-                    if !has_request_line && crlf_mod == 1 {
-                        has_request_line = true;
-                        unsafe {
-                            start_line.set_len(start_line.len() - 2);
-                        }
-                        let start_line = String::from_utf8_lossy(&start_line);
-                        println!("{}", start_line);
-                        let arr: Vec<&str> = start_line.split(' ')
-                            .filter(|&s| !s.is_empty()).collect();
-                        if arr.len() != 3 {
-                            eprintln!("Error HTTP request line: {}", start_line);
-                            he_write(stream.write(
-                                b"HTTP/1.1 500 Internal Server Error"));
+                    match headers_bf.find(*byte) {
+                        None => {}
+                        Some(end) => {
+                            let headers_bytes = &msg[line_bf.pos..end + 2];
+                            line_bf.reset();
+                            let mut start = 0;
+                            loop {
+                                match line_bf.finds(&headers_bytes[start..]) {
+                                    None => {
+                                        break;
+                                    }
+                                    Some(end) => {
+                                        let header_bytes = &headers_bytes[start..end];
+                                        let mut name_bf = BytesFind::new(b":");
+                                        match name_bf.finds(header_bytes) {
+                                            None => {}
+                                            Some(i) => {
+                                                let name = String::from_utf8_lossy(
+                                                    &header_bytes[..i])
+                                                    .trim().to_ascii_lowercase();
+                                                if name == "content-length" {
+                                                    let value = String::from_utf8_lossy(
+                                                        &header_bytes[i+1..]);
+                                                    let value = value.trim();
+                                                    match value.parse() {
+                                                        Ok(i) => {
+                                                            content_length = Some(i);
+                                                            continue 'byte;
+                                                        }
+                                                        Err(e) => {
+                                                            eprintln!("Error parse str (\"{}\") \
+                                                            to usize: {}", value, e);
+                                                        }
+                                                    }
+                                                    break 'read;
+                                                }
+                                            }
+                                        };
+                                        start = line_bf.pos;
+                                        line_bf.reset();
+                                        line_bf.pos = start;
+                                    }
+                                }
+                            }
                             break 'read;
                         }
-                        let method = arr[0].to_ascii_uppercase();
-                        let protocol = arr[2];
-                        if unsafe {
-                            (match A_DISALLOWED_METHODS.as_ref() {
-                                None => {false}
-                                Some(set) => {set.contains(&method)}
-                            }) || (match A_ALLOWED_METHODS.as_ref() {
-                                None => {false}
-                                Some(set) => {!set.contains(&method)}
-                            })
-                        } {
-                            println!("disallowed");
-                            he_write(stream.write(format!("\
-                            {} 405 Method not allowed\
-                            \r\n\r\n", protocol).as_bytes()));
-                            break 'read;
-                        }
-                        he_write(stream.write(format!("\
-                        {} 200 OK\r\n\
-                        Content-Type: text/plain; charset=utf-8\r\n\
-                        \r\n", protocol).as_bytes()));
-                        if method == "HEAD" {
-                            break 'read;
-                        }
-                        he_write(stream.write(b"Hello HTTP\n\n"));
-                        he_write(stream.write(start_line.as_bytes()));
-                        offset = i;
                     }
-                    if headers_flag > 2 {
-                        n = i;
-                        has_headers = true;
-                        break;
-                    }
-                    headers_flag += 1;
-                }
-                if has_request_line {
-                    he_write(stream.write(&buffer[offset..n]));
-                }
-                if has_headers {
-                    break 'read;
-                }
+                };
             },
             Err(e) => {
                 eprintln!("Error reading from TcpStream: {}", e);
@@ -197,7 +339,12 @@ fn handle_tcp_stream(mut stream: TcpStream) {
         }
     }
 
-    stream.flush().unwrap();
+    he_write(stream.write(b"Content-Length: "));
+    he_write(stream.write((12 + msg.len()).to_string().as_bytes()));
+    he_write(stream.write(b"\r\n\r\nHello HTTP\n\n"));
+    he_write(stream.write(&msg));
+
+    he_flush(&mut stream);
 }
 
 fn main() {
