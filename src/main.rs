@@ -1,7 +1,9 @@
 use std::collections::HashSet;
-use std::{env, io, process};
+use std::{env, fmt, io, process};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+
+const DEFAULT_HTTP_PROTOCOL: &str = "HTTP/1.1";
 
 static mut A_HOST: Option<String> = None;
 static mut A_PORT: Option<u16> = None;
@@ -103,6 +105,60 @@ fn test_finds() {
     assert_eq!(bf.finds(b"6,666666"), Some(2));
 }
 
+trait TcpStreamPrintError: Write {
+    fn pe_write_handle<T>(result: io::Result<T>) {
+        match result {
+            Err(e) => {
+                eprintln!("Error writing to TcpStream: {}", e);
+            }
+            _ => {}
+        }
+    }
+
+    fn pe_write_all(&mut self, buf: &[u8]) {
+        Self::pe_write_handle(self.write_all(buf));
+    }
+
+    fn pe_write_str(&mut self, string: &str) {
+        self.pe_write_all(string.as_bytes());
+    }
+
+    fn pe_write_fmt(&mut self, fmt: fmt::Arguments<'_>) {
+        Self::pe_write_handle(self.write_fmt(fmt));
+    }
+
+    fn pe_write_resp_line(&mut self, protocol: &str, code: u16) {
+        self.pe_write_str(protocol);
+        self.pe_write_all(b" ");
+        self.pe_write_all(code.to_string().as_bytes());
+        self.pe_write_all(b" ");
+        self.pe_write_all(match code {
+            200 => b"OK",
+            405 => b"Method not allowed",
+            500 => b"Internal Server Error",
+            _ => b"Unknown Status",
+        });
+        self.pe_write_all(if code == 200 {
+            b"\r\n"
+        } else {
+            b"\r\n\r\n"
+        });
+    }
+
+    fn pe_write_def_resp_line(&mut self, code: u16) {
+        self.pe_write_resp_line(DEFAULT_HTTP_PROTOCOL, code);
+    }
+
+    fn pe_write_header(&mut self, name: &[u8], value: &[u8]) {
+        self.pe_write_all(name);
+        self.pe_write_all(b": ");
+        self.pe_write_all(value);
+        self.pe_write_all(b"\r\n");
+    }
+}
+
+impl TcpStreamPrintError for TcpStream {}
+
 fn parse_set(s: &str) -> Option<HashSet<String>> {
     let mut set = HashSet::new();
     for mut s in s.split(',') {
@@ -190,24 +246,6 @@ Notes:
     }
 }
 
-fn he_write(r: io::Result<usize>) {
-    match r {
-        Err(e) => {
-            eprintln!("Error writing to TcpStream: {}", e)
-        }
-        _ => {}
-    }
-}
-
-fn he_flush(stream: &mut TcpStream) {
-    match stream.flush() {
-        Err(e) => {
-            eprintln!("Error flush TcpStream: {}", e);
-        }
-        _ => {}
-    }
-}
-
 fn handle_tcp_stream(mut stream: TcpStream) {
     let mut has_request_line = false;
     let mut line_bf = BytesFind::new(b"\r\n");
@@ -247,9 +285,7 @@ fn handle_tcp_stream(mut stream: TcpStream) {
                                     .filter(|&s| !s.is_empty()).collect();
                                 if arr.len() != 3 {
                                     eprintln!("Error HTTP request line: {}", start_line);
-                                    he_write(stream.write(
-                                        b"HTTP/1.1 500 Internal Server Error\r\n\r\n"));
-                                    he_flush(&mut stream);
+                                    stream.pe_write_def_resp_line(500);
                                     return;
                                 }
                                 let method = arr[0].to_ascii_uppercase();
@@ -264,20 +300,13 @@ fn handle_tcp_stream(mut stream: TcpStream) {
                                     })
                                 } {
                                     println!("disallowed");
-                                    he_write(stream.write(protocol.as_bytes()));
-                                    he_write(stream.write(b" \
-                                    405 Method not allowed\r\n\
-                                    \r\n"));
-                                    he_flush(&mut stream);
+                                    stream.pe_write_resp_line(protocol, 405);
                                     return;
                                 }
-                                he_write(stream.write(protocol.as_bytes()));
-                                he_write(stream.write(b" \
-                                200 OK\r\n\
-                                Content-Type: text/plain; charset=utf-8\r\n\
-                                "));
+                                stream.pe_write_resp_line(protocol, 200);
+                                stream.pe_write_header(
+                                    b"Content-Type", b"text/plain; charset=utf-8");
                                 if method == "HEAD" {
-                                    he_flush(&mut stream);
                                     return;
                                 }
                             }
@@ -339,12 +368,9 @@ fn handle_tcp_stream(mut stream: TcpStream) {
         }
     }
 
-    he_write(stream.write(b"Content-Length: "));
-    he_write(stream.write((12 + msg.len()).to_string().as_bytes()));
-    he_write(stream.write(b"\r\n\r\nHello HTTP\n\n"));
-    he_write(stream.write(&msg));
-
-    he_flush(&mut stream);
+    stream.pe_write_header(b"Content-Length", (12 + msg.len()).to_string().as_bytes());
+    stream.pe_write_all(b"\r\nHello HTTP\n\n");
+    stream.pe_write_all(&msg);
 }
 
 fn main() {
