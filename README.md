@@ -57,6 +57,5 @@ GET / HTTP/1.1
 
 ## Notes
 
-* Listen IPv4 and IPv6 at the same time use `-h ::`.  
-However, it is not possible to listen together on Windows.
+* If your operating system has dual-stack sockets enabled, you will be able to listen on both IPv4 and IPv6.
 * Chunked transfer not implemented.
