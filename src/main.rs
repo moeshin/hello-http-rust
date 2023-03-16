@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::{env, fmt, io, process};
+use std::{env, io, process};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 
@@ -14,59 +14,72 @@ struct BytesFind<'a> {
     pattern: &'a [u8],
     len: usize,
     i: usize,
-    pos: usize,
-    result: Option<usize>,
+    count: usize,
 }
 
 impl<'a> BytesFind<'a> {
-    fn new(pattern: &'a [u8]) -> Self {
-        return Self {
-            pattern,
-            len: pattern.len(),
-            i: 0,
-            pos: 0,
-            result: None,
+    fn new(pattern: &'a [u8]) -> Result<Self, String> {
+        let len = pattern.len();
+        if len == 0 {
+            Err("The length of pattern is 0".to_string())
+        } else {
+            Ok(Self {
+                pattern,
+                len,
+                i: 0,
+                count: 0,
+            })
         }
     }
 
-    fn reset(&mut self) {
+    fn reset(&mut self) -> usize {
         self.i = 0;
-        self.pos = 0;
-        self.result = None;
+        let count = self.count;
+        self.count = 0;
+        count
     }
 
-    fn find(&mut self, byte: u8) -> Option<usize> {
-        if self.result.is_some() {
-            return self.result;
-        }
-        if byte == self.pattern[self.i] {
-            self.i += 1;
-        } else if self.i != 0 {
-            self.i = 0;
-        }
-        self.pos += 1;
+    fn index(&self) -> Option<usize> {
         if self.i == self.len {
-            self.result = Some(self.pos - self.len);
-            self.result
+            Some(self.count - self.len)
         } else {
             None
         }
     }
 
+    fn find_unsafe(&mut self, byte: &u8) -> Option<usize> {
+        if *byte == self.pattern[self.i] {
+            self.i += 1;
+        } else if self.i != 0 {
+            self.i = 0;
+        }
+        self.count += 1;
+        self.index()
+    }
+
+    fn find(&mut self, byte: &u8) -> Option<usize> {
+        match self.index() {
+            None => {}
+            Some(i) => {
+                return Some(i);
+            }
+        }
+        self.find_unsafe(byte)
+    }
+
     fn finds(&mut self, bytes: &[u8]) -> Option<usize> {
-        if self.result.is_some() {
-            return self.result;
+        match self.index() {
+            None => {}
+            Some(i) => {
+                return Some(i);
+            }
         }
         for byte in bytes {
-            if *byte == self.pattern[self.i] {
-                self.i += 1;
-            } else if self.i != 0 {
-                self.i = 0;
-            }
-            self.pos += 1;
-            if self.i == self.len {
-                self.result = Some(self.pos - self.len);
-                return self.result;
+            match self.find_unsafe(byte) {
+                None => {}
+                Some(i) => {
+                    return Some(i);
+                }
             }
         }
         None
@@ -75,22 +88,19 @@ impl<'a> BytesFind<'a> {
 
 #[test]
 fn test_find() {
-    let mut bf = BytesFind::new(b"666");
-    assert_eq!(bf.find(b'6'), None);
-    assert_eq!(bf.find(b'6'), None);
-    assert_eq!(bf.find(b'6'), Some(0));
-    assert_eq!(bf.find(b'6'), Some(0));
+    let mut bf = BytesFind::new(b"666").unwrap();
+    assert_eq!(bf.find(&b'6'), None);
+    assert_eq!(bf.find(&b'6'), None);
+    assert_eq!(bf.find(&b'6'), Some(0));
+    assert_eq!(bf.find(&b'6'), Some(0));
     bf.reset();
-    assert_eq!(bf.find(b'0'), None);
-    assert_eq!(bf.find(b'6'), None);
-    assert_eq!(bf.find(b'6'), None);
-    assert_eq!(bf.find(b'6'), Some(1));
-    assert_eq!(bf.find(b'6'), Some(1));
-}
+    assert_eq!(bf.find(&b'0'), None);
+    assert_eq!(bf.find(&b'6'), None);
+    assert_eq!(bf.find(&b'6'), None);
+    assert_eq!(bf.find(&b'6'), Some(1));
+    assert_eq!(bf.find(&b'6'), Some(1));
 
-#[test]
-fn test_finds() {
-    let mut bf = BytesFind::new(b"666");
+    bf.reset();
     assert_eq!(bf.finds(b"666,666666"), Some(0));
     assert_eq!(bf.finds(b","), Some(0));
     bf.reset();
@@ -244,8 +254,8 @@ Notes:
 
 fn handle_tcp_stream(mut stream: TcpStream) {
     let mut has_request_line = false;
-    let mut line_bf = BytesFind::new(b"\r\n");
-    let mut headers_bf = BytesFind::new(b"\r\n\r\n");
+    let mut line_bf = BytesFind::new(b"\r\n").unwrap();
+    let mut headers_bf = BytesFind::new(b"\r\n\r\n").unwrap();
     let mut msg = Vec::with_capacity(4096);
     let mut buffer = [0; 2048];
     let mut content_length: Option<usize> = None;
@@ -271,7 +281,7 @@ fn handle_tcp_stream(mut stream: TcpStream) {
                         None => {}
                     }
                     if !has_request_line {
-                        match line_bf.find(*byte) {
+                        match line_bf.find(byte) {
                             None => {}
                             Some(end) => {
                                 has_request_line = true;
@@ -307,11 +317,10 @@ fn handle_tcp_stream(mut stream: TcpStream) {
                             }
                         }
                     }
-                    match headers_bf.find(*byte) {
+                    match headers_bf.find(byte) {
                         None => {}
                         Some(end) => {
-                            let headers_bytes = &msg[line_bf.pos..end + 2];
-                            line_bf.reset();
+                            let headers_bytes = &msg[line_bf.reset()..end + 2];
                             let mut start = 0;
                             loop {
                                 match line_bf.finds(&headers_bytes[start..]) {
@@ -320,7 +329,8 @@ fn handle_tcp_stream(mut stream: TcpStream) {
                                     }
                                     Some(end) => {
                                         let header_bytes = &headers_bytes[start..end];
-                                        let mut name_bf = BytesFind::new(b":");
+                                        let mut name_bf = BytesFind::new(b":")
+                                            .unwrap();
                                         match name_bf.finds(header_bytes) {
                                             None => {}
                                             Some(i) => {
@@ -345,9 +355,8 @@ fn handle_tcp_stream(mut stream: TcpStream) {
                                                 }
                                             }
                                         };
-                                        start = line_bf.pos;
-                                        line_bf.reset();
-                                        line_bf.pos = start;
+                                        start = line_bf.reset();
+                                        line_bf.count = start;
                                     }
                                 }
                             }
