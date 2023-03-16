@@ -115,7 +115,7 @@ fn test_find() {
     assert_eq!(bf.finds(b"6,666666"), Some(2));
 }
 
-trait TcpStreamPrintError: Write {
+trait PrintErrTcpStream: Write {
     fn pe_write_handle<T>(result: io::Result<T>) {
         match result {
             Err(e) => {
@@ -163,7 +163,7 @@ trait TcpStreamPrintError: Write {
     }
 }
 
-impl TcpStreamPrintError for TcpStream {}
+impl PrintErrTcpStream for TcpStream {}
 
 fn parse_set(s: &str) -> Option<HashSet<String>> {
     let mut set = HashSet::new();
