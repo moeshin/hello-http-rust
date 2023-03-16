@@ -123,10 +123,6 @@ trait TcpStreamPrintError: Write {
         self.pe_write_all(string.as_bytes());
     }
 
-    fn pe_write_fmt(&mut self, fmt: fmt::Arguments<'_>) {
-        Self::pe_write_handle(self.write_fmt(fmt));
-    }
-
     fn pe_write_resp_line(&mut self, protocol: &str, code: u16) {
         self.pe_write_str(protocol);
         self.pe_write_all(b" ");
@@ -299,7 +295,6 @@ fn handle_tcp_stream(mut stream: TcpStream) {
                                         Some(set) => {!set.contains(&method)}
                                     })
                                 } {
-                                    println!("disallowed");
                                     stream.pe_write_resp_line(protocol, 405);
                                     return;
                                 }
