@@ -212,9 +212,6 @@ Options:
         Allowed methods.
   --help
         Print help.
-
-Notes:
-  * Cannot listen IPv4 and IPv6 at the same time on Windows.
 ", bin, A_HOST.as_ref().unwrap(), A_PORT.as_ref().unwrap());
                     }
                     process::exit(0);
