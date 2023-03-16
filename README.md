@@ -31,7 +31,7 @@ Hello HTTP output
 Listening 127.0.0.1:8080
 ```
 
-Test by cURL
+Test with cURL
 
 ```shell
 curl http://127.0.0.1:8080
