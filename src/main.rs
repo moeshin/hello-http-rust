@@ -165,7 +165,7 @@ trait PrintErrTcpStream: Write {
 
 impl PrintErrTcpStream for TcpStream {}
 
-fn parse_set(s: &str) -> Option<HashSet<String>> {
+fn parse_methods(s: &str) -> Option<HashSet<String>> {
     let mut set = HashSet::new();
     for mut s in s.split(',') {
         s = s.trim();
@@ -228,10 +228,10 @@ Options:
                         A_PORT = Some(arg.parse().unwrap());
                     }
                     "-m" | "--allowed-methods" => {
-                        A_ALLOWED_METHODS = parse_set(arg);
+                        A_ALLOWED_METHODS = parse_methods(arg);
                     }
                     "-d" | "--disallowed-methods" => {
-                        A_DISALLOWED_METHODS = parse_set(arg);
+                        A_DISALLOWED_METHODS = parse_methods(arg);
                     }
                     _ => {
                         panic!("Unknown option: {}", name);
