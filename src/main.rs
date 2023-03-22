@@ -182,70 +182,61 @@ fn parse_methods(s: &str) -> Option<HashSet<String>> {
     }
 }
 
-fn parse_args() {
-    let args: Vec<String> = env::args().collect();
-    let mut option: Option<&str> = None;
-    for (i, arg) in args.iter().enumerate() {
-        if i == 0 {
-            continue;
-        }
-        match option {
-            None => {
-                if !arg.starts_with('-') {
-                    panic!("It is not a option: {}", arg);
-                }
-                if arg == "--help" {
-                    let mut bin = args.get(0).unwrap().clone();
-                    if bin.contains(' ') {
-                        bin = format!("\"{}\"", bin).to_string();
-                    }
-                    unsafe {
-                        print!("Usage: {} [options]
+fn print_help(args: &Vec<String>) {
+    let mut file = args.get(0).unwrap().clone();
+    if file.contains(' ') {
+        file = format!("\"{}\"", file);
+    }
+    unsafe {
+        print!("Usage: {} [options]
+
 Options:
-  -h, --host <host>
-        Listen host. (default \"{}\")
-  -p, --port <port>
-        Listen port. If 0 is random. (default {})
-  -m, --allowed-methods <method>[,<methods>...]
+  -h <host>
+        Listen host.
+        (default \"{}\")
+  -p <port>
+        Listen port.
+        If 0 is random.
+        (default {})
+  -m <method>[,<method>...]
         Disallowed methods.
-  -d, --disallowed-methods <method>[,<methods>...]
+  -d <method>[,<method>...]
         Allowed methods.
   --help
         Print help.
-", bin, A_HOST.as_ref().unwrap(), A_PORT.as_ref().unwrap());
-                    }
-                    process::exit(0);
-                }
-                option = Some(arg);
-            }
-            Some(name) => unsafe {
-                option = None;
-                match name {
-                    "-h" | "--host"  => {
-                        A_HOST = Some(arg.to_string());
-                    }
-                    "-p" | "--port" => {
-                        A_PORT = Some(arg.parse().unwrap());
-                    }
-                    "-m" | "--allowed-methods" => {
-                        A_ALLOWED_METHODS = parse_methods(arg);
-                    }
-                    "-d" | "--disallowed-methods" => {
-                        A_DISALLOWED_METHODS = parse_methods(arg);
-                    }
-                    _ => {
-                        panic!("Unknown option: {}", name);
-                    }
-                }
-            }
-        }
+", file, A_HOST.as_ref().unwrap(), A_PORT.as_ref().unwrap());
     }
+}
 
-    match option {
-        Some(name) => {
-            panic!("No found that option value: {}", name)
+fn parse_args() {
+    let args: Vec<String> = env::args().collect();
+    let mut iter = args[1..].iter();
+    unsafe {
+        while let Some(arg) = iter.next() {
+            match arg.as_str() {
+                "--help" => {
+                    print_help(&args);
+                    process::exit(0);
+                },
+                "-h" => {
+                    A_HOST = Some(iter.next().unwrap().clone());
+                }
+                "-p" => {
+                    A_PORT = Some(iter.next().unwrap().parse().unwrap());
+                }
+                "-m" => {
+                    A_ALLOWED_METHODS = parse_methods(iter.next().unwrap());
+                }
+                "-d" => {
+                    A_DISALLOWED_METHODS = parse_methods(iter.next().unwrap());
+                }
+                arg => {
+                    println!("Unknown arg: {}", arg);
+                    print_help(&args);
+                    process::exit(1);
+                }
+            }
         }
-        _ => {}
     }
 }
 

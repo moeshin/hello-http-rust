@@ -6,14 +6,18 @@ Build an HTTP server based on the standard library and respond to the request me
 
 ```text
 Usage: hello-http [options]
+
 Options:
-  -h, --host <host>
-        Listen host. (default "127.0.0.1")
-  -p, --port <port>
-        Listen port. If 0 is random. (default 8080)
-  -m, --allowed-methods <method>[,<methods>...]
+  -h <host>
+        Listen host.
+        (default "127.0.0.1")
+  -p <port>
+        Listen port.
+        If 0 is random.
+        (default 8080)
+  -m <method>[,<method>...]
         Disallowed methods.
-  -d, --disallowed-methods <method>[,<methods>...]
+  -d <method>[,<method>...]
         Allowed methods.
   --help
         Print help.
