@@ -91,7 +91,7 @@ trait TcpStreamExtensions: Write {
         self.write_all(b" ")?;
         self.write_all(match code {
             200 => b"OK",
-            405 => b"Method not allowed",
+            405 => b"Method Not Allowed",
             500 => b"Internal Server Error",
             _ => b"Unknown Status",
         })?;
