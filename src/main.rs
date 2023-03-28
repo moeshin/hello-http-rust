@@ -93,50 +93,38 @@ fn test_search_bytes() {
     assert_eq!(bf.search2(b"6,666666"), Some(2));
 }
 
-trait PrintErrTcpStream: Write {
-    fn pe_write_handle<T>(result: io::Result<T>) {
-        match result {
-            Err(e) => {
-                eprintln!("Error writing to TcpStream: {}", e);
-            }
-            _ => {}
-        }
+trait TcpStreamExtensions: Write {
+    fn write_new_line(&mut self) -> io::Result<()> {
+        self.write_all(b"\r\n")
     }
 
-    fn pe_write_all(&mut self, buf: &[u8]) {
-        Self::pe_write_handle(self.write_all(buf));
-    }
-
-    fn pe_write_new_line(&mut self) {
-        self.pe_write_all(b"\r\n");
-    }
-
-    fn pe_write_resp_line(&mut self, code: u16) {
-        self.pe_write_all(b"HTTP/1.0");
-        self.pe_write_all(b" ");
-        self.pe_write_all(code.to_string().as_bytes());
-        self.pe_write_all(b" ");
-        self.pe_write_all(match code {
+    fn write_resp_line(&mut self, code: u16) -> io::Result<()> {
+        self.write_all(b"HTTP/1.0")?;
+        self.write_all(b" ")?;
+        self.write_all(code.to_string().as_bytes())?;
+        self.write_all(b" ")?;
+        self.write_all(match code {
             200 => b"OK",
             405 => b"Method not allowed",
             500 => b"Internal Server Error",
             _ => b"Unknown Status",
-        });
-        self.pe_write_new_line();
+        })?;
+        self.write_new_line()?;
         if code != 200 {
-            self.pe_write_new_line();
+            self.write_new_line()?;
         }
+        Ok(())
     }
 
-    fn pe_write_header(&mut self, name: &[u8], value: &[u8]) {
-        self.pe_write_all(name);
-        self.pe_write_all(b": ");
-        self.pe_write_all(value);
-        self.pe_write_new_line();
+    fn write_header(&mut self, name: &[u8], value: &[u8]) -> io::Result<()> {
+        self.write_all(name)?;
+        self.write_all(b": ")?;
+        self.write_all(value)?;
+        self.write_new_line()
     }
 }
 
-impl PrintErrTcpStream for TcpStream {}
+impl TcpStreamExtensions for TcpStream {}
 
 fn parse_methods(s: &str) -> Option<HashSet<String>> {
     let mut set = HashSet::new();
@@ -213,7 +201,7 @@ fn parse_args() {
     }
 }
 
-fn handle_tcp_stream(mut stream: TcpStream) {
+fn handle_tcp_stream(mut stream: TcpStream) -> io::Result<()> {
     let mut line_sb = SearchBytes::new(b"\r\n").unwrap();
     let mut header_sb = SearchBytes::new(b":").unwrap();
     let mut eof = false;
@@ -226,27 +214,19 @@ fn handle_tcp_stream(mut stream: TcpStream) {
         header_sb.reset();
 
         loop {
-            match stream.read(&mut buf) {
-                Ok(n) => {
-                    if n == 0 {
-                        eof = true;
-                        break;
-                    }
-                    let byte = &buf[0];
-                    cache.push(*byte);
+            if stream.read(&mut buf)? == 0 {
+                eof = true;
+                break;
+            }
+            let byte = &buf[0];
+            cache.push(*byte);
 
-                    if line_sb.search(byte).is_some() {
-                        break;
-                    }
+            if line_sb.search(byte).is_some() {
+                break;
+            }
 
-                    if request_line_ok {
-                        header_sb.search(byte);
-                    }
-                },
-                Err(e) => {
-                    eprintln!("Error reading from TcpStream: {}", e);
-                    return;
-                }
+            if request_line_ok {
+                header_sb.search(byte);
             }
         }
 
@@ -277,14 +257,12 @@ fn handle_tcp_stream(mut stream: TcpStream) {
                     Some(set) => { !set.contains(&method) }
                 })
             } {
-                stream.pe_write_resp_line(405);
-                return;
+                return stream.write_resp_line(405);
             }
-            stream.pe_write_resp_line(200);
-            stream.pe_write_header(b"Content-Type", b"text/plain; charset=utf-8");
+            stream.write_resp_line(200)?;
+            stream.write_header(b"Content-Type", b"text/plain; charset=utf-8")?;
             if method == "HEAD" {
-                stream.pe_write_all(b"\r\n");
-                return;
+                return stream.write_all(b"\r\n");
             }
             continue;
         }
@@ -319,50 +297,38 @@ fn handle_tcp_stream(mut stream: TcpStream) {
     while !eof && line_sb.result() != Some(0) {
         line_sb.reset();
         loop {
-            match stream.read(&mut buf) {
-                Ok(n) => {
-                    if n == 0 {
-                        eof = true;
-                        break;
-                    }
-                    let byte = &buf[0];
-                    cache.push(*byte);
+            if stream.read(&mut buf)? == 0 {
+                eof = true;
+                break;
+            }
+            let byte = &buf[0];
+            cache.push(*byte);
 
-                    if line_sb.search(byte).is_some() {
-                        break;
-                    }
-                },
-                Err(e) => {
-                    eprintln!("Error reading from TcpStream: {}", e);
-                    return;
-                }
+            if line_sb.search(byte).is_some() {
+                break;
             }
         }
     }
 
-    stream.pe_write_header(b"Content-Length",
-                           (12 + cache.len() + content_length).to_string().as_bytes());
-    stream.pe_write_all(b"\r\nHello HTTP\n\n");
-    stream.pe_write_all(&cache);
+    stream.write_header(b"Content-Length",
+                        (12 + cache.len() + content_length).to_string().as_bytes())?;
+    stream.write_new_line()?;
+    stream.write_all(b"Hello HTTP\n\n")?;
+    stream.write_all(&cache)?;
     drop(cache);
 
     const BUFFER_SIZE: usize = 1024;
     let mut buffer = [0; BUFFER_SIZE];
     let mut total = 0;
     while total < content_length {
-        match stream.read(&mut buffer) {
-            Ok(size) => {
-                if size == 0 {
-                    break;
-                }
-                stream.pe_write_all(&buffer[..size]);
-                total += size;
-            }
-            Err(e) => {
-                eprintln!("Error coping TcpStream itself: {}", e);
-            }
+        let n = stream.read(&mut buffer)?;
+        if n == 0 {
+            break;
         }
+        stream.write_all(&buffer[..n])?;
+        total += n;
     }
+    Ok(())
 }
 
 fn main() {
@@ -384,7 +350,12 @@ fn main() {
         match stream {
             Ok(stream) => {
                 std::thread::spawn(|| {
-                    handle_tcp_stream(stream);
+                    match handle_tcp_stream(stream) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            eprintln!("Error handling TcpStream: {}", e);
+                        }
+                    };
                 });
             }
             Err(e) => {
