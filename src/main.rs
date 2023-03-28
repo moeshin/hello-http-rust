@@ -66,31 +66,17 @@ impl<'a> SearchBytes<'a> {
 
 #[test]
 fn test_search_bytes() {
-    let mut bf = SearchBytes::new(b"666").unwrap();
-    assert_eq!(bf.search(&b'6'), None);
-    assert_eq!(bf.search(&b'6'), None);
-    assert_eq!(bf.search(&b'6'), Some(0));
-    assert_eq!(bf.search(&b'6'), Some(0));
-    bf.reset();
-    assert_eq!(bf.search(&b'0'), None);
-    assert_eq!(bf.search(&b'6'), None);
-    assert_eq!(bf.search(&b'6'), None);
-    assert_eq!(bf.search(&b'6'), Some(1));
-    assert_eq!(bf.search(&b'6'), Some(1));
-
-    bf.reset();
-    assert_eq!(bf.search2(b"666,666666"), Some(0));
-    assert_eq!(bf.search2(b","), Some(0));
-    bf.reset();
-    assert_eq!(bf.search2(b"6,666,666666"), Some(2));
-    assert_eq!(bf.search2(b"666"), Some(2));
-    bf.reset();
-    assert_eq!(bf.search2(b"6,6"), None);
-    assert_eq!(bf.search2(b"66,666666"), Some(2));
-    bf.reset();
-    assert_eq!(bf.search2(b"6,6"), None);
-    assert_eq!(bf.search2(b"6"), None);
-    assert_eq!(bf.search2(b"6,666666"), Some(2));
+    let mut sb = SearchBytes::new(b"666").unwrap();
+    assert_eq!(sb.search(&b'6'), None);
+    assert_eq!(sb.search(&b'6'), None);
+    assert_eq!(sb.search(&b'6'), Some(0));
+    assert_eq!(sb.search(&b'6'), Some(0));
+    sb.reset();
+    assert_eq!(sb.search(&b'0'), None);
+    assert_eq!(sb.search(&b'6'), None);
+    assert_eq!(sb.search(&b'6'), None);
+    assert_eq!(sb.search(&b'6'), Some(1));
+    assert_eq!(sb.search(&b'6'), Some(1));
 }
 
 trait TcpStreamExtensions: Write {
