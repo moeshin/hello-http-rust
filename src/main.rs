@@ -260,13 +260,13 @@ fn handle_tcp_stream(mut stream: TcpStream) -> io::Result<()> {
             }
             Some(mut i) => {
                 i += line_start;
-                let name = String::from_utf8_lossy(&cache[line_start..i]).trim()
-                    .to_ascii_lowercase();
+                let name = String::from_utf8_lossy(&cache[line_start..i])
+                    .trim().to_ascii_lowercase();
                 if name != "content-length" {
                     continue;
                 }
-                let value = String::from_utf8_lossy(&cache[i+header_sb.length..line_end]).trim()
-                    .to_owned();
+                let value = String::from_utf8_lossy(&cache[i+header_sb.length..line_end])
+                    .trim().to_owned();
                 // println!("H '{}': '{}'", name, value);
                 content_length = match value.parse() {
                     Ok(n) => n,
@@ -274,7 +274,8 @@ fn handle_tcp_stream(mut stream: TcpStream) -> io::Result<()> {
                         eprintln!("Error parsing Content-Length str (\"{}\") to int: {}", value, e);
                         0
                     }
-                }
+                };
+                break;
             }
         }
     }
