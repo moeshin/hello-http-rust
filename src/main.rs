@@ -3,8 +3,6 @@ use std::{env, io, process};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 
-const DEFAULT_HTTP_PROTOCOL: &str = "HTTP/1.1";
-
 static mut A_HOST: Option<String> = None;
 static mut A_PORT: Option<u16> = None;
 static mut A_ALLOWED_METHODS: Option<HashSet<String>> = None;
@@ -32,11 +30,9 @@ impl<'a> SearchBytes<'a> {
         }
     }
 
-    fn reset(&mut self) -> usize {
+    fn reset(&mut self) {
         self.index = 0;
-        let count = self.count;
         self.count = 0;
-        count
     }
 
     fn result(&self) -> Option<usize> {
@@ -65,24 +61,6 @@ impl<'a> SearchBytes<'a> {
             }
         }
         self._search(byte)
-    }
-
-    fn search2(&mut self, bytes: &[u8]) -> Option<usize> {
-        match self.result() {
-            None => {}
-            Some(i) => {
-                return Some(i);
-            }
-        }
-        for byte in bytes {
-            match self._search(byte) {
-                None => {}
-                Some(i) => {
-                    return Some(i);
-                }
-            }
-        }
-        None
     }
 }
 
@@ -129,12 +107,12 @@ trait PrintErrTcpStream: Write {
         Self::pe_write_handle(self.write_all(buf));
     }
 
-    fn pe_write_str(&mut self, string: &str) {
-        self.pe_write_all(string.as_bytes());
+    fn pe_write_new_line(&mut self) {
+        self.pe_write_all(b"\r\n");
     }
 
-    fn pe_write_resp_line(&mut self, protocol: &str, code: u16) {
-        self.pe_write_str(protocol);
+    fn pe_write_resp_line(&mut self, code: u16) {
+        self.pe_write_all(b"HTTP/1.0");
         self.pe_write_all(b" ");
         self.pe_write_all(code.to_string().as_bytes());
         self.pe_write_all(b" ");
@@ -144,22 +122,17 @@ trait PrintErrTcpStream: Write {
             500 => b"Internal Server Error",
             _ => b"Unknown Status",
         });
-        self.pe_write_all(if code == 200 {
-            b"\r\n"
-        } else {
-            b"\r\n\r\n"
-        });
-    }
-
-    fn pe_write_def_resp_line(&mut self, code: u16) {
-        self.pe_write_resp_line(DEFAULT_HTTP_PROTOCOL, code);
+        self.pe_write_new_line();
+        if code != 200 {
+            self.pe_write_new_line();
+        }
     }
 
     fn pe_write_header(&mut self, name: &[u8], value: &[u8]) {
         self.pe_write_all(name);
         self.pe_write_all(b": ");
         self.pe_write_all(value);
-        self.pe_write_all(b"\r\n");
+        self.pe_write_new_line();
     }
 }
 
@@ -241,128 +214,155 @@ fn parse_args() {
 }
 
 fn handle_tcp_stream(mut stream: TcpStream) {
-    let mut has_request_line = false;
-    let mut line_bf = SearchBytes::new(b"\r\n").unwrap();
-    let mut headers_bf = SearchBytes::new(b"\r\n\r\n").unwrap();
-    let mut msg = Vec::with_capacity(4096);
-    let mut buffer = [0; 2048];
-    let mut content_length: Option<usize> = None;
-    let mut content_i = 0;
-    'read:
-    loop {
-        match stream.read(&mut buffer) {
-            Ok(0) => {
-                break;
-            },
-            Ok(n) => {
-                'byte:
-                for byte in &buffer[..n] {
-                    msg.push(*byte);
-                    match content_length {
-                        Some(length) => {
-                            content_i += 1;
-                            if content_i >= length {
-                                break 'read;
-                            }
-                            continue;
-                        }
-                        None => {}
+    let mut line_sb = SearchBytes::new(b"\r\n").unwrap();
+    let mut header_sb = SearchBytes::new(b":").unwrap();
+    let mut eof = false;
+    let mut request_line_ok = false;
+    let mut cache = Vec::with_capacity(4096);
+    let mut buf = [0; 1];
+    let mut content_length = 0;
+    while !eof && line_sb.result() != Some(0) {
+        line_sb.reset();
+        header_sb.reset();
+
+        loop {
+            match stream.read(&mut buf) {
+                Ok(n) => {
+                    if n == 0 {
+                        eof = true;
+                        break;
                     }
-                    if !has_request_line {
-                        match line_bf.search(byte) {
-                            None => {}
-                            Some(end) => {
-                                has_request_line = true;
-                                let start_line = String::from_utf8_lossy(&msg[..end]);
-                                println!("{}", start_line);
-                                let arr: Vec<&str> = start_line.split(' ')
-                                    .filter(|&s| !s.is_empty()).collect();
-                                if arr.len() != 3 {
-                                    eprintln!("Error HTTP request line: {}", start_line);
-                                    stream.pe_write_def_resp_line(500);
-                                    return;
-                                }
-                                let method = arr[0].to_ascii_uppercase();
-                                let protocol = arr[2];
-                                if unsafe {
-                                    (match A_DISALLOWED_METHODS.as_ref() {
-                                        None => {false}
-                                        Some(set) => {set.contains(&method)}
-                                    }) || (match A_ALLOWED_METHODS.as_ref() {
-                                        None => {false}
-                                        Some(set) => {!set.contains(&method)}
-                                    })
-                                } {
-                                    stream.pe_write_resp_line(protocol, 405);
-                                    return;
-                                }
-                                stream.pe_write_resp_line(protocol, 200);
-                                stream.pe_write_header(
-                                    b"Content-Type", b"text/plain; charset=utf-8");
-                                if method == "HEAD" {
-                                    return;
-                                }
-                            }
-                        }
+                    let byte = &buf[0];
+                    cache.push(*byte);
+
+                    if line_sb.search(byte).is_some() {
+                        break;
                     }
-                    match headers_bf.search(byte) {
-                        None => {}
-                        Some(end) => {
-                            let headers_bytes = &msg[line_bf.reset()..end + 2];
-                            let mut start = 0;
-                            loop {
-                                match line_bf.search2(&headers_bytes[start..]) {
-                                    None => {
-                                        break;
-                                    }
-                                    Some(end) => {
-                                        let header_bytes = &headers_bytes[start..end];
-                                        let mut name_bf = SearchBytes::new(b":")
-                                            .unwrap();
-                                        match name_bf.search2(header_bytes) {
-                                            None => {}
-                                            Some(i) => {
-                                                let name = String::from_utf8_lossy(
-                                                    &header_bytes[..i])
-                                                    .trim().to_ascii_lowercase();
-                                                if name == "content-length" {
-                                                    let value = String::from_utf8_lossy(
-                                                        &header_bytes[i+1..]);
-                                                    let value = value.trim();
-                                                    match value.parse() {
-                                                        Ok(i) => {
-                                                            content_length = Some(i);
-                                                            continue 'byte;
-                                                        }
-                                                        Err(e) => {
-                                                            eprintln!("Error parse str (\"{}\") \
-                                                            to usize: {}", value, e);
-                                                        }
-                                                    }
-                                                    break 'read;
-                                                }
-                                            }
-                                        };
-                                        start = line_bf.reset();
-                                        line_bf.count = start;
-                                    }
-                                }
-                            }
-                            break 'read;
-                        }
+
+                    if request_line_ok {
+                        header_sb.search(byte);
                     }
-                };
-            },
-            Err(e) => {
-                eprintln!("Error reading from TcpStream: {}", e);
-                break 'read;
+                },
+                Err(e) => {
+                    eprintln!("Error reading from TcpStream: {}", e);
+                    return;
+                }
+            }
+        }
+
+        let line_end = cache.len() - line_sb.length;
+        let line_start = line_end - line_sb.result().unwrap_or(0);
+        if !request_line_ok {
+            request_line_ok = true;
+            let request_line = String::from_utf8_lossy(&cache[line_start..line_end]);
+            println!("{}", request_line);
+            let method = match request_line.find(' ') {
+                None => "".to_string(),
+                Some(mut i) => {
+                    i += 1;
+                    if i <= request_line.len() {
+                        (&request_line[..i]).to_ascii_uppercase()
+                    } else {
+                        "".to_string()
+                    }
+                }
+            };
+
+            if unsafe {
+                (match A_DISALLOWED_METHODS.as_ref() {
+                    None => { false }
+                    Some(set) => { set.contains(&method) }
+                }) || (match A_ALLOWED_METHODS.as_ref() {
+                    None => { false }
+                    Some(set) => { !set.contains(&method) }
+                })
+            } {
+                stream.pe_write_resp_line(405);
+                return;
+            }
+            stream.pe_write_resp_line(200);
+            stream.pe_write_header(b"Content-Type", b"text/plain; charset=utf-8");
+            if method == "HEAD" {
+                stream.pe_write_all(b"\r\n");
+                return;
+            }
+            continue;
+        }
+
+        match header_sb.result() {
+            None => {
+                // Bad request header line
+                continue;
+            }
+            Some(mut i) => {
+                i += line_start;
+                let name = String::from_utf8_lossy(&cache[line_start..i]).trim()
+                    .to_ascii_lowercase();
+                if name != "content-length" {
+                    continue;
+                }
+                let value = String::from_utf8_lossy(&cache[i+header_sb.length..line_end]).trim()
+                    .to_owned();
+                // println!("H '{}': '{}'", name, value);
+                content_length = match value.parse() {
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("Error parsing Content-Length str (\"{}\") to int: {}", value, e);
+                        0
+                    }
+                }
             }
         }
     }
 
-    stream.pe_write_header(b"Content-Length", (12 + msg.len()).to_string().as_bytes());
+
+    while !eof && line_sb.result() != Some(0) {
+        line_sb.reset();
+        loop {
+            match stream.read(&mut buf) {
+                Ok(n) => {
+                    if n == 0 {
+                        eof = true;
+                        break;
+                    }
+                    let byte = &buf[0];
+                    cache.push(*byte);
+
+                    if line_sb.search(byte).is_some() {
+                        break;
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Error reading from TcpStream: {}", e);
+                    return;
+                }
+            }
+        }
+    }
+
+    stream.pe_write_header(b"Content-Length",
+                           (12 + cache.len() + content_length).to_string().as_bytes());
     stream.pe_write_all(b"\r\nHello HTTP\n\n");
-    stream.pe_write_all(&msg);
+    stream.pe_write_all(&cache);
+    drop(cache);
+
+    const BUFFER_SIZE: usize = 1024;
+    let mut buffer = [0; BUFFER_SIZE];
+    let mut total = 0;
+    while total < content_length {
+        match stream.read(&mut buffer) {
+            Ok(size) => {
+                if size == 0 {
+                    break;
+                }
+                stream.pe_write_all(&buffer[..size]);
+                total += size;
+            }
+            Err(e) => {
+                eprintln!("Error coping TcpStream itself: {}", e);
+            }
+        }
+    }
 }
 
 fn main() {
