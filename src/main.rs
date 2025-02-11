@@ -134,6 +134,7 @@ fn print_help(args: &Vec<String>) {
     if file.contains(' ') {
         file = format!("\"{}\"", file);
     }
+    #[allow(static_mut_refs)]
     unsafe {
         print!("Usage: {} [options]
 
@@ -234,6 +235,7 @@ fn handle_tcp_stream(mut stream: TcpStream) -> io::Result<()> {
                 }
             };
 
+            #[allow(static_mut_refs)]
             if unsafe {
                 (match A_DISALLOWED_METHODS.as_ref() {
                     None => { false }
@@ -327,6 +329,7 @@ fn main() {
 
     parse_args();
 
+    #[allow(static_mut_refs)]
     let (host, port) = unsafe { (
         A_HOST.as_ref().unwrap(),
         A_PORT.as_ref().unwrap(),
