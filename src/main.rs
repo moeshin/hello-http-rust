@@ -1,7 +1,7 @@
 use std::collections::HashSet;
-use std::{env, io, process};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::{env, io, process};
 
 static mut A_HOST: Option<String> = None;
 static mut A_PORT: Option<u16> = None;
@@ -136,7 +136,8 @@ fn print_help(args: &Vec<String>) {
     }
     #[allow(static_mut_refs)]
     unsafe {
-        print!("Usage: {} [options]
+        print!(
+            "Usage: {} [options]
 
 Options:
   -h <host>
@@ -152,7 +153,11 @@ Options:
         Allowed methods.
   --help
         Print help.
-", file, A_HOST.as_ref().unwrap(), A_PORT.as_ref().unwrap());
+",
+            file,
+            A_HOST.as_ref().unwrap(),
+            A_PORT.as_ref().unwrap()
+        );
     }
 }
 
@@ -161,25 +166,34 @@ fn parse_args() {
     let mut iter = args[1..].iter();
     unsafe {
         while let Some(arg) = iter.next() {
+            let mut next_option_arg = || {
+                println!("Option miss arg: {}\n", &arg);
+                let next = iter.next();
+                if next.is_none() {
+                    print_help(&args);
+                    process::exit(1);
+                }
+                return next.unwrap();
+            };
             match arg.as_str() {
                 "--help" => {
                     print_help(&args);
                     process::exit(0);
-                },
+                }
                 "-h" => {
-                    A_HOST = Some(iter.next().unwrap().clone());
+                    A_HOST = Some(next_option_arg().clone());
                 }
                 "-p" => {
-                    A_PORT = Some(iter.next().unwrap().parse().unwrap());
+                    A_PORT = Some(next_option_arg().parse().unwrap());
                 }
                 "-m" => {
-                    A_ALLOWED_METHODS = parse_methods(iter.next().unwrap());
+                    A_ALLOWED_METHODS = parse_methods(next_option_arg());
                 }
                 "-d" => {
-                    A_DISALLOWED_METHODS = parse_methods(iter.next().unwrap());
+                    A_DISALLOWED_METHODS = parse_methods(next_option_arg());
                 }
                 arg => {
-                    println!("Unknown arg: {}", arg);
+                    println!("Unknown arg: {}\n", arg);
                     print_help(&args);
                     process::exit(1);
                 }
@@ -238,11 +252,11 @@ fn handle_tcp_stream(mut stream: TcpStream) -> io::Result<()> {
             #[allow(static_mut_refs)]
             if unsafe {
                 (match A_DISALLOWED_METHODS.as_ref() {
-                    None => { false }
-                    Some(set) => { set.contains(&method) }
+                    None => false,
+                    Some(set) => set.contains(&method),
                 }) || (match A_ALLOWED_METHODS.as_ref() {
-                    None => { false }
-                    Some(set) => { !set.contains(&method) }
+                    None => false,
+                    Some(set) => !set.contains(&method),
                 })
             } {
                 return stream.write_resp_line(405);
@@ -263,17 +277,22 @@ fn handle_tcp_stream(mut stream: TcpStream) -> io::Result<()> {
             Some(mut i) => {
                 i += line_start;
                 let name = String::from_utf8_lossy(&cache[line_start..i])
-                    .trim().to_ascii_lowercase();
+                    .trim()
+                    .to_ascii_lowercase();
                 if name != "content-length" {
                     continue;
                 }
-                let value = String::from_utf8_lossy(&cache[i+header_sb.length..line_end])
-                    .trim().to_owned();
+                let value = String::from_utf8_lossy(&cache[i + header_sb.length..line_end])
+                    .trim()
+                    .to_owned();
                 // println!("H '{}': '{}'", name, value);
                 content_length = match value.parse() {
                     Ok(n) => n,
                     Err(e) => {
-                        eprintln!("Error parsing Content-Length str (\"{}\") to int: {}", value, e);
+                        eprintln!(
+                            "Error parsing Content-Length str (\"{}\") to int: {}",
+                            value, e
+                        );
                         0
                     }
                 };
@@ -281,7 +300,6 @@ fn handle_tcp_stream(mut stream: TcpStream) -> io::Result<()> {
             }
         }
     }
-
 
     while !eof && line_sb.result() != Some(0) {
         line_sb.reset();
@@ -299,8 +317,10 @@ fn handle_tcp_stream(mut stream: TcpStream) -> io::Result<()> {
         }
     }
 
-    stream.write_header(b"Content-Length",
-                        (12 + cache.len() + content_length).to_string().as_bytes())?;
+    stream.write_header(
+        b"Content-Length",
+        (12 + cache.len() + content_length).to_string().as_bytes(),
+    )?;
     stream.write_new_line()?;
     stream.write_all(b"Hello HTTP\n\n")?;
     stream.write_all(&cache)?;
@@ -321,7 +341,6 @@ fn handle_tcp_stream(mut stream: TcpStream) -> io::Result<()> {
 }
 
 fn main() {
-
     unsafe {
         A_HOST = Some("127.0.0.1".to_string());
         A_PORT = Some(8080);
@@ -330,10 +349,7 @@ fn main() {
     parse_args();
 
     #[allow(static_mut_refs)]
-    let (host, port) = unsafe { (
-        A_HOST.as_ref().unwrap(),
-        A_PORT.as_ref().unwrap(),
-    ) };
+    let (host, port) = unsafe { (A_HOST.as_ref().unwrap(), A_PORT.as_ref().unwrap()) };
     let listener = TcpListener::bind(format!("{}:{}", host, port)).unwrap();
     println!("Listening {:?}", listener.local_addr().unwrap());
     for stream in listener.incoming() {
