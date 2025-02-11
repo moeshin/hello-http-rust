@@ -1,0 +1,151 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      short_sha: ${{ steps.common.outputs.short_sha }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set common outputs
+        id: common
+        run: |
+          echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu
+            target: i686-unknown-linux-gnu
+          - os: ubuntu
+            target: aarch64-unknown-linux-gnu
+          - os: ubuntu
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu
+            target: i686-unknown-linux-musl
+          - os: ubuntu
+            target: aarch64-unknown-linux-musl
+          - os: macos
+            target: x86_64-apple-darwin
+          - os: macos
+            target: aarch64-apple-darwin
+          - os: ubuntu
+            target: x86_64-pc-windows-gnu
+          - os: ubuntu
+            target: i686-pc-windows-gnu
+          - os: windows
+            target: x86_64-pc-windows-msvc
+          - os: windows
+            target: i686-pc-windows-msvc
+          - os: windows
+            target: aarch64-pc-windows-msvc
+
+    runs-on: ${{ matrix.os }}-latest
+    needs: [ prepare ]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: List rust toolchain
+        run: rustup toolchain list
+
+      - name: Apt install
+        if: ${{ matrix.os == 'ubuntu' }}
+        run: |
+          sudo apt update
+
+          if ${{ matrix.target == 'i686-unknown-linux-gnu' }}; then
+            sudo apt install gcc-multilib
+          elif ${{ contains(matrix.target, '-linux-') && contains(matrix.target, 'aarch64-') }}; then
+            sudo apt install gcc-aarch64-linux-gnu
+            sudo ln -sf "$(which aarch64-linux-gnu-gcc)" "$(which cc)"
+          elif ${{ contains(matrix.target, '-pc-windows-gnu') }}; then
+            sudo apt install mingw-w64
+          fi
+
+      - name: Rustup add target
+        run: rustup target add "${{ matrix.target }}"
+
+      - name: Build
+        run: cargo build --verbose --target "${{ matrix.target }}"
+
+      - name: Rename bin
+        id: rename
+        shell: bash
+        run: |
+          bin_name=hello-http
+          base_name="$bin_name-${{ needs.prepare.outputs.short_sha }}-${{ matrix.target }}"
+          ext_name="${{ contains(matrix.target, '-windows-') && '.exe' || '' }}"
+          target_path="target/${{ matrix.target }}/debug/$bin_name$ext_name"
+
+          echo "base_name=$base_name" >> "$GITHUB_OUTPUT"
+
+          mkdir -p bin
+          mv "$target_path" "bin/$base_name$ext_name"
+
+          ls -lh bin
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.rename.outputs.base_name }}
+          path: bin/
+
+  prerelease:
+    name: Prerelease
+    permissions: write-all
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: bin/
+
+      - name: Delete prerelease assets
+        uses: 8Mi-Tech/delete-release-assets-action@main
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag: prerelease-${{ github.ref_name }}
+          deleteOnlyFromDrafts: false
+
+      - name: Update git tag
+        run: |
+          tag_name="prerelease-${{ github.ref_name }}"
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git tag -f "$tag_name"
+          git push -f origin "$tag_name"
+
+      - name: Prerelease
+        uses: softprops/action-gh-release@v1
+        with:
+          prerelease: true
+          name: 'Prerelease: ${{ github.ref_name }}'
+          tag_name: prerelease-${{ github.ref_name }}
+          body: "Build for commit ${{ needs.prepare.outputs.short_sha }}"
+          files: bin/*
