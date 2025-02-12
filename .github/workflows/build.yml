@@ -3,7 +3,8 @@ name: Build
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,6 +18,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set common outputs
         id: common
@@ -56,14 +59,19 @@ jobs:
             target: aarch64-pc-windows-msvc
 
     runs-on: ${{ matrix.os }}-latest
-    needs: [ prepare ]
+    needs:
+      - prepare
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: List rust toolchain
-        run: rustup toolchain list
+      - run: cargo -Vv
+      - run: rustc -Vv
+      - run: rustup -Vv
+      - run: rustup toolchain list
 
       - name: Apt install
         if: ${{ matrix.os == 'ubuntu' }}
@@ -71,10 +79,10 @@ jobs:
           sudo apt update
 
           if ${{ matrix.target == 'i686-unknown-linux-gnu' }}; then
-            sudo apt install gcc-multilib
+            sudo apt install g++-multilib
           elif ${{ contains(matrix.target, '-linux-') && contains(matrix.target, 'aarch64-') }}; then
-            sudo apt install gcc-aarch64-linux-gnu
-            sudo ln -sf "$(which aarch64-linux-gnu-gcc)" "$(which cc)"
+            sudo apt install g++-aarch64-linux-gnu
+            echo 'RUSTFLAGS=-C linker=aarch64-linux-gnu-g++' >> "$GITHUB_ENV"
           elif ${{ contains(matrix.target, '-pc-windows-gnu') }}; then
             sudo apt install mingw-w64
           fi
@@ -96,10 +104,10 @@ jobs:
 
           echo "base_name=$base_name" >> "$GITHUB_OUTPUT"
 
+          ls -lh "$target_path"
+
           mkdir -p bin
           mv "$target_path" "bin/$base_name$ext_name"
-
-          ls -lh bin
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -115,11 +123,6 @@ jobs:
       - build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -132,14 +135,6 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           tag: prerelease-${{ github.ref_name }}
           deleteOnlyFromDrafts: false
-
-      - name: Update git tag
-        run: |
-          tag_name="prerelease-${{ github.ref_name }}"
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git tag -f "$tag_name"
-          git push -f origin "$tag_name"
 
       - name: Prerelease
         uses: softprops/action-gh-release@v1
